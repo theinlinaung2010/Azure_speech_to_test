@@ -1,0 +1,37 @@
+audio/
+out/
+*.wav
+*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+
+# Logs
+*.log
+
+# API directories
+api/uploads/*
+!api/uploads/.gitkeep
+api/out/*
+!api/out/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

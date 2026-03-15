@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Azure Speech API Test</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      .card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+        padding: 40px;
+        margin-bottom: 20px;
+      }
+
+      h1 {
+        color: #333;
+        margin-bottom: 10px;
+      }
+
+      .subtitle {
+        color: #666;
+        margin-bottom: 30px;
+      }
+
+      .upload-area {
+        border: 2px dashed #ddd;
+        border-radius: 8px;
+        padding: 40px;
+        text-align: center;
+        transition: all 0.3s;
+        background: #fafafa;
+        cursor: pointer;
+      }
+
+      .upload-area:hover,
+      .upload-area.drag-over {
+        border-color: #667eea;
+        background: #f0f4ff;
+      }
+
+      .upload-icon {
+        font-size: 48px;
+        margin-bottom: 20px;
+      }
+
+      input[type="file"] {
+        display: none;
+      }
+
+      button {
+        background: #667eea;
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        border-radius: 6px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background 0.3s;
+        margin-top: 20px;
+      }
+
+      button:hover {
+        background: #5568d3;
+      }
+
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+
+      .progress-section {
+        margin-top: 20px;
+        display: none;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 8px;
+        background: #f0f0f0;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 10px;
+      }
+
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #667eea, #764ba2);
+        transition: width 0.3s;
+        width: 0%;
+      }
+
+      .status {
+        text-align: center;
+        color: #666;
+        font-size: 14px;
+      }
+
+      .transcription-section {
+        display: none;
+        margin-top: 30px;
+      }
+
+      .transcription-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+
+      .transcription-header h2 {
+        margin: 0;
+      }
+
+      .button-group {
+        display: flex;
+        gap: 10px;
+      }
+
+      .btn-small {
+        padding: 8px 16px;
+        font-size: 14px;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 400px;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        font-family: "Courier New", monospace;
+        font-size: 14px;
+        line-height: 1.6;
+        resize: vertical;
+      }
+
+      .error {
+        background: #fee;
+        color: #c33;
+        padding: 15px;
+        border-radius: 6px;
+        margin-top: 15px;
+        display: none;
+      }
+
+      .info {
+        background: #e3f2fd;
+        color: #1976d2;
+        padding: 15px;
+        border-radius: 6px;
+        margin-bottom: 20px;
+      }
+
+      .selected-file {
+        margin-top: 20px;
+        padding: 15px;
+        background: #f0f4ff;
+        border-radius: 6px;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <h1>🎤 Azure Speech API Test</h1>
+        <p class="subtitle">Test your Flask API before WordPress deployment</p>
+
+        <div class="info">
+          <strong>API Status:</strong> <span id="api-status">Checking...</span><br />
+          <strong>Endpoint:</strong> <span id="api-endpoint">http://localhost:3333</span>
+        </div>
+
+        <div class="upload-area" id="upload-area">
+          <div class="upload-icon">📁</div>
+          <h3>Drop audio file here or click to select</h3>
+          <p style="color: #999; margin-top: 10px">Supported: WAV, M4A (Max 50MB)</p>
+          <input type="file" id="file-input" accept=".wav,.m4a" />
+        </div>
+
+        <div class="selected-file" id="selected-file"></div>
+
+        <button id="upload-btn" style="display: none">Start Transcription</button>
+
+        <div class="progress-section" id="progress-section">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="status" id="status-text">Initializing...</div>
+        </div>
+
+        <div class="transcription-section" id="transcription-section">
+          <div class="transcription-header">
+            <h2>Transcription</h2>
+            <div class="button-group">
+              <button class="btn-small" id="copy-btn">📋 Copy</button>
+              <button class="btn-small" id="download-btn" style="display: none">💾 Download</button>
+            </div>
+          </div>
+          <textarea id="transcription-text" readonly></textarea>
+        </div>
+
+        <div class="error" id="error-section"></div>
+      </div>
+    </div>
+
+    <script>
+      const API_URL = "http://localhost:3333";
+      let selectedFile = null;
+      let currentJobId = null;
+      let eventSource = null;
+
+      // Check API health
+      async function checkApiHealth() {
+        try {
+          const response = await fetch(`${API_URL}/api/health`);
+          const data = await response.json();
+          document.getElementById("api-status").textContent = data.status === "healthy" ? "✅ Online" : "❌ Offline";
+          document.getElementById("api-status").style.color = data.status === "healthy" ? "#2e7d32" : "#c62828";
+        } catch (error) {
+          document.getElementById("api-status").textContent = "❌ Offline";
+          document.getElementById("api-status").style.color = "#c62828";
+          showError("Cannot connect to API. Make sure Flask is running on port 3333.");
+        }
+      }
+
+      // File upload handling
+      const uploadArea = document.getElementById("upload-area");
+      const fileInput = document.getElementById("file-input");
+      const uploadBtn = document.getElementById("upload-btn");
+      const selectedFileDiv = document.getElementById("selected-file");
+
+      uploadArea.addEventListener("click", () => fileInput.click());
+
+      uploadArea.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        uploadArea.classList.add("drag-over");
+      });
+
+      uploadArea.addEventListener("dragleave", () => {
+        uploadArea.classList.remove("drag-over");
+      });
+
+      uploadArea.addEventListener("drop", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("drag-over");
+        if (e.dataTransfer.files.length > 0) {
+          handleFileSelect(e.dataTransfer.files[0]);
+        }
+      });
+
+      fileInput.addEventListener("change", (e) => {
+        if (e.target.files.length > 0) {
+          handleFileSelect(e.target.files[0]);
+        }
+      });
+
+      function handleFileSelect(file) {
+        const validTypes = ["audio/wav", "audio/x-wav", "audio/m4a", "audio/x-m4a"];
+        const fileExt = file.name.split(".").pop().toLowerCase();
+
+        if (!validTypes.includes(file.type) && fileExt !== "wav" && fileExt !== "m4a") {
+          showError("Invalid file type. Please select WAV or M4A file.");
+          return;
+        }
+
+        if (file.size > 50 * 1024 * 1024) {
+          showError("File too large. Maximum size is 50MB.");
+          return;
+        }
+
+        selectedFile = file;
+        selectedFileDiv.innerHTML = `<strong>${file.name}</strong> (${formatFileSize(file.size)})`;
+        selectedFileDiv.style.display = "block";
+        uploadBtn.style.display = "inline-block";
+        hideError();
+      }
+
+      uploadBtn.addEventListener("click", startTranscription);
+
+      async function startTranscription() {
+        if (!selectedFile) return;
+
+        uploadBtn.disabled = true;
+        document.getElementById("progress-section").style.display = "block";
+        updateStatus("Uploading...", 10);
+
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+
+        try {
+          const response = await fetch(`${API_URL}/api/upload`, {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!response.ok) {
+            throw new Error("Upload failed");
+          }
+
+          const data = await response.json();
+          currentJobId = data.job_id;
+          updateStatus("Processing...", 20);
+          startStreaming(currentJobId);
+        } catch (error) {
+          showError("Upload failed: " + error.message);
+          uploadBtn.disabled = false;
+        }
+      }
+
+      function startStreaming(jobId) {
+        updateStatus("Streaming transcription...", 25);
+        document.getElementById("transcription-section").style.display = "block";
+        document.getElementById("transcription-text").value = "";
+
+        const streamUrl = `${API_URL}/api/stream/${jobId}`;
+        eventSource = new EventSource(streamUrl);
+
+        eventSource.onmessage = function (event) {
+          const data = JSON.parse(event.data);
+          handleStreamEvent(data);
+        };
+
+        eventSource.onerror = function () {
+          if (eventSource.readyState === EventSource.CLOSED) {
+            console.log("Stream closed");
+          } else {
+            showError("Connection lost. Please try again.");
+          }
+          eventSource.close();
+        };
+      }
+
+      function handleStreamEvent(event) {
+        switch (event.type) {
+          case "connected":
+            console.log("Connected to stream");
+            break;
+
+          case "started":
+            updateStatus("Transcription started...", 30);
+            break;
+
+          case "segment":
+            appendTranscription(event.timestamp, event.text);
+            updateProgress(50);
+            break;
+
+          case "completed":
+            updateStatus("✅ Completed!", 100);
+            document.getElementById("download-btn").style.display = "inline-block";
+            uploadBtn.disabled = false;
+            if (eventSource) {
+              eventSource.close();
+            }
+            break;
+
+          case "error":
+            showError("Transcription error: " + (event.message || "Unknown error"));
+            uploadBtn.disabled = false;
+            if (eventSource) {
+              eventSource.close();
+            }
+            break;
+        }
+      }
+
+      function appendTranscription(timestamp, text) {
+        const textarea = document.getElementById("transcription-text");
+        textarea.value += `${timestamp}\n${text}\n\n`;
+        textarea.scrollTop = textarea.scrollHeight;
+      }
+
+      // Copy to clipboard
+      document.getElementById("copy-btn").addEventListener("click", () => {
+        const text = document.getElementById("transcription-text").value;
+        navigator.clipboard.writeText(text).then(() => {
+          const btn = document.getElementById("copy-btn");
+          const originalText = btn.textContent;
+          btn.textContent = "✅ Copied!";
+          setTimeout(() => {
+            btn.textContent = originalText;
+          }, 2000);
+        });
+      });
+
+      // Download transcript
+      document.getElementById("download-btn").addEventListener("click", () => {
+        if (currentJobId) {
+          window.location.href = `${API_URL}/api/download/${currentJobId}`;
+        }
+      });
+
+      // Helper functions
+      function updateStatus(message, progress) {
+        document.getElementById("status-text").textContent = message;
+        if (progress !== undefined) {
+          updateProgress(progress);
+        }
+      }
+
+      function updateProgress(percent) {
+        document.getElementById("progress-fill").style.width = percent + "%";
+      }
+
+      function showError(message) {
+        const errorDiv = document.getElementById("error-section");
+        errorDiv.textContent = message;
+        errorDiv.style.display = "block";
+      }
+
+      function hideError() {
+        document.getElementById("error-section").style.display = "none";
+      }
+
+      function formatFileSize(bytes) {
+        if (bytes === 0) return "0 Bytes";
+        const k = 1024;
+        const sizes = ["Bytes", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+      }
+
+      // Initialize
+      checkApiHealth();
+      setInterval(checkApiHealth, 30000); // Check every 30 seconds
+    </script>
+  </body>
+</html>
