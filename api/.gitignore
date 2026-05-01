@@ -17,6 +17,9 @@ build/
 # Logs
 *.log
 
+# Keep requirements files
+!requirements.txt
+
 # Uploads and outputs
 api/uploads/*
 !api/uploads/.gitkeep
