@@ -1,5 +1,6 @@
 import os
 import time
+import wave
 import logging
 import datetime
 from pathlib import Path
@@ -9,6 +10,9 @@ from pydub import AudioSegment
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
+# 1 second of 16kHz 16-bit mono = 32000 bytes
+_PUSH_CHUNK_BYTES = 32000
 
 
 class TranscriptionService:
@@ -44,10 +48,9 @@ class TranscriptionService:
         audio_path = Path(audio_file)
 
         prepared_file = self.prepare_audio(str(audio_path))
-        audio_file = prepared_file
 
-        total_duration = len(AudioSegment.from_file(audio_file)) / 1000.0
-        logger.info(f"Audio ready: {Path(audio_file).name}, duration={total_duration:.1f}s")
+        total_duration = len(AudioSegment.from_file(prepared_file)) / 1000.0
+        logger.info(f"Audio ready: {Path(prepared_file).name}, duration={total_duration:.1f}s")
 
         speech_config = speechsdk.SpeechConfig(
             subscription=self.speech_key, region=self.speech_region
@@ -56,9 +59,16 @@ class TranscriptionService:
         speech_config.output_format = speechsdk.OutputFormat.Detailed
         logger.info(f"Azure SDK configured: language=my-MM, region={self.speech_region}")
 
-        audio_input = speechsdk.AudioConfig(filename=audio_file)
+        # PushAudioInputStream bypasses ALSA device init in headless Docker containers.
+        # AudioConfig(filename=...) silently fails when no audio hardware is present.
+        audio_format = speechsdk.audio.AudioStreamFormat(
+            samples_per_second=16000, bits_per_sample=16, channels=1
+        )
+        push_stream = speechsdk.audio.PushAudioInputStream(audio_format)
+        audio_config = speechsdk.audio.AudioConfig(stream=push_stream)
+
         speech_recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config, audio_config=audio_input
+            speech_config=speech_config, audio_config=audio_config
         )
 
         f = open(output_file, "w", encoding="utf-8")
@@ -115,16 +125,23 @@ class TranscriptionService:
             on_started_callback(total_duration)
         speech_recognizer.start_continuous_recognition()
 
-        stop_requested = False
+        # Push raw PCM frames in chunks; stop early if requested
+        with wave.open(prepared_file, "rb") as wf:
+            while True:
+                if stop_event and stop_event.is_set():
+                    logger.info("Stop requested — closing audio stream")
+                    break
+                frames = wf.readframes(_PUSH_CHUNK_BYTES // 2)  # frames not bytes
+                if not frames:
+                    break
+                push_stream.write(frames)
+
+        push_stream.close()
+        logger.info("Audio stream closed, waiting for recognition to finish")
+
         while not done:
-            if stop_event and stop_event.is_set() and not stop_requested:
-                logger.info("Stop requested — stopping recognition")
-                stop_requested = True
-                speech_recognizer.stop_continuous_recognition()
             time.sleep(0.5)
 
-        if not stop_requested:
-            speech_recognizer.stop_continuous_recognition()
         f.close()
 
         if cancellation_error:
