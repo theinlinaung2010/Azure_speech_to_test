@@ -107,9 +107,11 @@ class TranscriptionService:
             if evt.reason == speechsdk.CancellationReason.Error:
                 cancellation_error = f"{evt.error_code}: {evt.error_details}"
                 logger.error(f"Azure SDK cancellation error: {cancellation_error}")
+                done = True
             else:
+                # EndOfStream or other non-error reasons — let stopped_cb set done
+                # after all recognized events have been delivered.
                 logger.info(f"Recognition canceled (reason={evt.reason})")
-            done = True
 
         def stopped_cb(evt):
             nonlocal done
