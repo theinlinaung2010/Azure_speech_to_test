@@ -7,7 +7,7 @@ import threading
 import logging
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, request, Response, jsonify, send_file, redirect
+from flask import Flask, request, Response, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from transcription_service import TranscriptionService
@@ -285,42 +285,21 @@ def health_check():
     return jsonify({"status": "healthy"}), 200
 
 
-# ── Plugin preview (dev-only) ──────────────────────────────────────────────
-PLUGIN_DIR = Path(__file__).parent.parent / "wordpress-plugin" / "azure-speech-transcribe"
-AST_PREVIEW_PASSWORD = os.environ.get("AST_PASSWORD", "demo")
+ACCESS_PASSWORD = os.environ.get("AST_PASSWORD", "demo")
 
 
 @app.route("/")
 def index():
-    return redirect("/preview")
-
-
-@app.route("/preview")
-def preview_page():
-    return send_file(Path(__file__).parent / "plugin-preview.html")
-
-
-@app.route("/preview/transcribe.js")
-def preview_js():
-    return send_file(
-        str(PLUGIN_DIR / "assets" / "js" / "transcribe.js"),
-        mimetype="application/javascript",
-    )
+    return send_file(Path(__file__).parent / "index.html")
 
 
 @app.route("/api/validate-password", methods=["POST"])
 def validate_password():
-    """Mock WordPress AJAX password validation for plugin preview."""
     password = request.form.get("password", "")
-    if password == AST_PREVIEW_PASSWORD:
+    if password == ACCESS_PASSWORD:
         return jsonify({"success": True, "data": {"message": "Password validated"}})
     return jsonify({"success": False, "data": {"message": "Invalid password"}})
 
 
-@app.route("/api/preview-info")
-def preview_info():
-    return jsonify({"password": AST_PREVIEW_PASSWORD})
-
-
 if __name__ == "__main__":
-    app.run(host="localhost", port=3333, threaded=True, debug=True)
+    app.run(host="localhost", port=3333, threaded=True, debug=False)
