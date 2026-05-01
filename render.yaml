@@ -2,6 +2,7 @@ services:
   - type: web
     name: azure-speech-transcribe
     runtime: docker
+    plan: free
     dockerfilePath: ./api/Dockerfile
     dockerContext: ./api
     envVars:
