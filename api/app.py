@@ -7,7 +7,7 @@ import threading
 import logging
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, request, Response, jsonify, send_file
+from flask import Flask, request, Response, jsonify, send_file, redirect
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from transcription_service import TranscriptionService
@@ -288,6 +288,11 @@ def health_check():
 # ── Plugin preview (dev-only) ──────────────────────────────────────────────
 PLUGIN_DIR = Path(__file__).parent.parent / "wordpress-plugin" / "azure-speech-transcribe"
 AST_PREVIEW_PASSWORD = os.environ.get("AST_PASSWORD", "demo")
+
+
+@app.route("/")
+def index():
+    return redirect("/preview")
 
 
 @app.route("/preview")
