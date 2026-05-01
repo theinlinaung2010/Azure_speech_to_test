@@ -25,22 +25,29 @@ class TranscriptionService:
 
         logger.info(f"TranscriptionService initialized (region={self.speech_region})")
 
-    def convert_m4a_to_wav(self, m4a_file, wav_file):
-        logger.info(f"Converting M4A to WAV: {Path(m4a_file).name}")
-        audio = AudioSegment.from_file(m4a_file, format="m4a")
-        audio.export(wav_file, format="wav")
-        logger.info(f"Conversion complete: {Path(wav_file).name}")
+    def prepare_audio(self, audio_file):
+        """Convert any input audio to 16kHz mono 16-bit WAV required by Azure Speech SDK."""
+        audio_path = Path(audio_file)
+        out_path = audio_path.parent / f"{audio_path.stem}_azure.wav"
+
+        logger.info(f"Preparing audio: {audio_path.name}")
+        audio = AudioSegment.from_file(str(audio_path))
+
+        original_info = f"{audio.frame_rate}Hz, {audio.channels}ch, {audio.sample_width*8}bit"
+        audio = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+        logger.info(f"Converted {original_info} -> 16000Hz, 1ch, 16bit: {out_path.name}")
+
+        audio.export(str(out_path), format="wav")
+        return str(out_path)
 
     def transcribe_file(self, audio_file, output_file, on_segment_callback=None, stop_event=None, on_started_callback=None):
         audio_path = Path(audio_file)
 
-        if audio_path.suffix.lower() == ".m4a":
-            wav_file = audio_path.with_suffix(".wav")
-            self.convert_m4a_to_wav(str(audio_path), str(wav_file))
-            audio_file = str(wav_file)
+        prepared_file = self.prepare_audio(str(audio_path))
+        audio_file = prepared_file
 
         total_duration = len(AudioSegment.from_file(audio_file)) / 1000.0
-        logger.info(f"Audio loaded: {Path(audio_file).name}, duration={total_duration:.1f}s")
+        logger.info(f"Audio ready: {Path(audio_file).name}, duration={total_duration:.1f}s")
 
         speech_config = speechsdk.SpeechConfig(
             subscription=self.speech_key, region=self.speech_region
