@@ -63,20 +63,16 @@ class TranscriptionService:
         # Open output file
         f = open(output_file, "w", encoding="utf-8")
 
-        # Event to signal completion
         done = False
+        cancellation_error = None
 
         def recognized_cb(evt):
-            """Callback for recognized speech segments"""
-            nonlocal done
-
             result = evt.result
             text = result.text.replace(" ", "")
 
             if not text:
                 return
 
-            # Calculate timestamp
             offset = result.offset / 10000000
             duration = result.duration / 10000000
             start_time = datetime.timedelta(seconds=offset)
@@ -85,38 +81,31 @@ class TranscriptionService:
                 str(start_time).split(".")[0], str(end_time).split(".")[0]
             )
 
-            # Write to file
             f.write(timestamp + "\n")
             f.write(text + "\n\n")
             f.flush()
 
-            # Call callback if provided
             if on_segment_callback:
                 on_segment_callback(timestamp, text, offset)
 
         def canceled_cb(evt):
-            """Callback for cancellation"""
-            nonlocal done
+            nonlocal done, cancellation_error
             if evt.reason == speechsdk.CancellationReason.Error:
-                print(f"Cancellation error: {evt.error_details}")
+                cancellation_error = f"{evt.error_code}: {evt.error_details}"
             done = True
 
         def stopped_cb(evt):
-            """Callback for session stopped"""
             nonlocal done
             done = True
 
-        # Connect callbacks
         speech_recognizer.recognized.connect(recognized_cb)
         speech_recognizer.canceled.connect(canceled_cb)
         speech_recognizer.session_stopped.connect(stopped_cb)
 
-        # Notify caller of total duration then start recognition
         if on_started_callback:
             on_started_callback(total_duration)
         speech_recognizer.start_continuous_recognition()
 
-        # Wait for completion or stop signal
         import time
         stop_requested = False
         while not done:
@@ -128,3 +117,6 @@ class TranscriptionService:
         if not stop_requested:
             speech_recognizer.stop_continuous_recognition()
         f.close()
+
+        if cancellation_error:
+            raise RuntimeError(f"Azure Speech SDK error: {cancellation_error}")
