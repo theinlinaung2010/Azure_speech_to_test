@@ -3,8 +3,8 @@ services:
     name: azure-speech-transcribe
     runtime: docker
     plan: free
-    dockerfilePath: ./api/Dockerfile
-    dockerContext: ./api
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     envVars:
       - key: SPEECH_KEY
         sync: false
