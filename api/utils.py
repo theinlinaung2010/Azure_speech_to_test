@@ -4,11 +4,11 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import threading
 
-# Configure logging
+# Configure logging — stdout only so logs appear in Render's log viewer
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("transcription.log"), logging.StreamHandler()],
+    handlers=[logging.StreamHandler()],
 )
 
 logger = logging.getLogger(__name__)
