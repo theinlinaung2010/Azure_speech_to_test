@@ -109,9 +109,32 @@
       }
 
       .status {
-        text-align: center;
         color: #666;
         font-size: 14px;
+      }
+
+      .progress-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 8px;
+      }
+
+      .progress-pct {
+        color: #667eea;
+        font-weight: 600;
+        font-size: 14px;
+        white-space: nowrap;
+      }
+
+      #stop-btn {
+        background: #e53e3e;
+        margin-top: 12px;
+        width: 100%;
+      }
+
+      #stop-btn:hover {
+        background: #c53030;
       }
 
       .transcription-section {
@@ -192,7 +215,7 @@
         <div class="upload-area" id="upload-area">
           <div class="upload-icon">📁</div>
           <h3>Drop audio file here or click to select</h3>
-          <p style="color: #999; margin-top: 10px">Supported: WAV, M4A (Max 50MB)</p>
+          <p style="color: #999; margin-top: 10px">Supported: WAV, M4A (Max 200MB)</p>
           <input type="file" id="file-input" accept=".wav,.m4a" />
         </div>
 
@@ -204,7 +227,11 @@
           <div class="progress-bar">
             <div class="progress-fill" id="progress-fill"></div>
           </div>
-          <div class="status" id="status-text">Initializing...</div>
+          <div class="progress-info">
+            <div class="status" id="status-text">Initializing...</div>
+            <span class="progress-pct" id="progress-pct">0%</span>
+          </div>
+          <button id="stop-btn" style="display: none">⏹ Stop Transcription</button>
         </div>
 
         <div class="transcription-section" id="transcription-section">
@@ -227,6 +254,7 @@
       let selectedFile = null;
       let currentJobId = null;
       let eventSource = null;
+      let totalDuration = 0;
 
       // Check API health
       async function checkApiHealth() {
@@ -282,8 +310,8 @@
           return;
         }
 
-        if (file.size > 50 * 1024 * 1024) {
-          showError("File too large. Maximum size is 50MB.");
+        if (file.size > 200 * 1024 * 1024) {
+          showError("File too large. Maximum size is 200MB.");
           return;
         }
 
@@ -300,6 +328,8 @@
         if (!selectedFile) return;
 
         uploadBtn.disabled = true;
+        totalDuration = 0;
+        document.getElementById("download-btn").style.display = "none";
         document.getElementById("progress-section").style.display = "block";
         updateStatus("Uploading...", 10);
 
@@ -330,6 +360,10 @@
         updateStatus("Streaming transcription...", 25);
         document.getElementById("transcription-section").style.display = "block";
         document.getElementById("transcription-text").value = "";
+        const stopBtn = document.getElementById("stop-btn");
+        stopBtn.style.display = "block";
+        stopBtn.disabled = false;
+        stopBtn.textContent = "⏹ Stop Transcription";
 
         const streamUrl = `${API_URL}/api/stream/${jobId}`;
         eventSource = new EventSource(streamUrl);
@@ -356,17 +390,32 @@
             break;
 
           case "started":
+            totalDuration = event.duration;
             updateStatus("Transcription started...", 30);
             break;
 
           case "segment":
             appendTranscription(event.timestamp, event.text);
-            updateProgress(50);
+            const pct = totalDuration > 0 ? 30 + (event.offset / totalDuration) * 65 : 50;
+            updateProgress(Math.min(pct, 95));
             break;
 
           case "completed":
             updateStatus("✅ Completed!", 100);
+            document.getElementById("stop-btn").style.display = "none";
             document.getElementById("download-btn").style.display = "inline-block";
+            uploadBtn.disabled = false;
+            if (eventSource) {
+              eventSource.close();
+            }
+            break;
+
+          case "stopped":
+            updateStatus("⏸ Stopped — partial transcript available", 100);
+            document.getElementById("stop-btn").style.display = "none";
+            if (event.has_content) {
+              document.getElementById("download-btn").style.display = "inline-block";
+            }
             uploadBtn.disabled = false;
             if (eventSource) {
               eventSource.close();
@@ -375,6 +424,7 @@
 
           case "error":
             showError("Transcription error: " + (event.message || "Unknown error"));
+            document.getElementById("stop-btn").style.display = "none";
             uploadBtn.disabled = false;
             if (eventSource) {
               eventSource.close();
@@ -402,6 +452,20 @@
         });
       });
 
+      // Stop transcription
+      document.getElementById("stop-btn").addEventListener("click", async () => {
+        if (!currentJobId) return;
+        const btn = document.getElementById("stop-btn");
+        btn.disabled = true;
+        btn.textContent = "Stopping...";
+        try {
+          await fetch(`${API_URL}/api/stop/${currentJobId}`, { method: "POST" });
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = "⏹ Stop Transcription";
+        }
+      });
+
       // Download transcript
       document.getElementById("download-btn").addEventListener("click", () => {
         if (currentJobId) {
@@ -419,6 +483,7 @@
 
       function updateProgress(percent) {
         document.getElementById("progress-fill").style.width = percent + "%";
+        document.getElementById("progress-pct").textContent = Math.round(percent) + "%";
       }
 
       function showError(message) {

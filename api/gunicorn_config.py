@@ -1,8 +1,11 @@
-bind = "127.0.0.1:5000"
-workers = 2
-worker_class = "sync"
+import os
+
+bind = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
+workers = 1
+worker_class = "gthread"
+threads = 4
 timeout = 300
 keepalive = 75
-accesslog = "access.log"
-errorlog = "error.log"
+accesslog = "-"
+errorlog = "-"
 loglevel = "info"

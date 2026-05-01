@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: azure-speech-transcribe
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    envVars:
+      - key: SPEECH_KEY
+        sync: false
+      - key: SPEECH_REGION
+        sync: false
+      - key: AST_PASSWORD
+        sync: false

@@ -23,7 +23,7 @@ app.logger.setLevel(logging.INFO)
 UPLOAD_FOLDER = Path("./uploads").resolve()
 OUTPUT_FOLDER = Path("./out").resolve()
 ALLOWED_EXTENSIONS = {"wav", "m4a"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
 
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 OUTPUT_FOLDER.mkdir(exist_ok=True)
@@ -35,6 +35,10 @@ jobs_lock = threading.Lock()
 # Event queues for SSE
 event_queues = {}
 queues_lock = threading.Lock()
+
+# Stop events for in-progress jobs
+stop_events = {}
+stop_events_lock = threading.Lock()
 
 transcription_service = TranscriptionService()
 
@@ -67,6 +71,18 @@ def create_event_queue(job_id):
 def get_event_queue(job_id):
     with queues_lock:
         return event_queues.get(job_id)
+
+
+def create_stop_event(job_id):
+    with stop_events_lock:
+        event = threading.Event()
+        stop_events[job_id] = event
+        return event
+
+
+def get_stop_event(job_id):
+    with stop_events_lock:
+        return stop_events.get(job_id)
 
 
 def emit_event(job_id, event_type, data=None):
@@ -135,38 +151,58 @@ def process_transcription(job_id):
         filepath = Path(job["filepath"])
         logger.info(f"Starting transcription for job: {job_id}")
 
-        # Emit started event
-        emit_event(job_id, "started")
-        update_job(job_id, {"status": "processing"})
-
         # Setup output file
         output_file = OUTPUT_FOLDER / f"{job_id}.txt"
 
-        # Define callback for recognized segments
-        def on_segment(timestamp, text):
-            emit_event(job_id, "segment", {"timestamp": timestamp, "text": text})
+        def on_started(duration_seconds):
+            update_job(job_id, {"status": "processing", "duration": duration_seconds})
+            emit_event(job_id, "started", {"duration": duration_seconds})
+
+        def on_segment(timestamp, text, offset_seconds):
+            emit_event(job_id, "segment", {"timestamp": timestamp, "text": text, "offset": offset_seconds})
 
         # Run transcription
+        stop_event = create_stop_event(job_id)
         transcription_service.transcribe_file(
-            str(filepath), str(output_file), on_segment
+            str(filepath), str(output_file), on_segment, stop_event=stop_event, on_started_callback=on_started
         )
 
-        # Emit completed event
-        update_job(
-            job_id,
-            {
+        if stop_event.is_set():
+            has_content = output_file.exists() and output_file.stat().st_size > 0
+            update_job(job_id, {
+                "status": "stopped",
+                "output_file": str(output_file) if has_content else None,
+                "stopped_at": datetime.now().isoformat(),
+            })
+            emit_event(job_id, "stopped", {"has_content": has_content})
+            logger.info(f"Transcription stopped for job: {job_id}")
+        else:
+            update_job(job_id, {
                 "status": "completed",
                 "output_file": str(output_file),
                 "completed_at": datetime.now().isoformat(),
-            },
-        )
-        emit_event(job_id, "completed", {"output_file": str(output_file)})
-        logger.info(f"Transcription completed for job: {job_id}")
+            })
+            emit_event(job_id, "completed", {"output_file": str(output_file)})
+            logger.info(f"Transcription completed for job: {job_id}")
 
     except Exception as e:
         logger.error(f"Transcription error for job {job_id}: {e}")
         update_job(job_id, {"status": "error", "error": str(e)})
         emit_event(job_id, "error", {"message": str(e)})
+
+
+@app.route("/api/stop/<job_id>", methods=["POST"])
+def stop_transcription(job_id):
+    """Signal a running transcription job to stop"""
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    if job["status"] != "processing":
+        return jsonify({"error": "Job is not currently processing"}), 400
+    event = get_stop_event(job_id)
+    if event:
+        event.set()
+    return jsonify({"message": "Stop signal sent"}), 200
 
 
 @app.route("/api/stream/<job_id>", methods=["GET"])
@@ -216,7 +252,7 @@ def download_transcript(job_id):
     if not job:
         return jsonify({"error": "Job not found"}), 404
 
-    if job["status"] != "completed":
+    if job["status"] not in ("completed", "stopped"):
         return jsonify({"error": "Transcription not completed yet"}), 400
 
     output_file = job.get("output_file")
@@ -247,6 +283,38 @@ def get_status(job_id):
 def health_check():
     """Health check endpoint"""
     return jsonify({"status": "healthy"}), 200
+
+
+# ── Plugin preview (dev-only) ──────────────────────────────────────────────
+PLUGIN_DIR = Path(__file__).parent.parent / "wordpress-plugin" / "azure-speech-transcribe"
+AST_PREVIEW_PASSWORD = os.environ.get("AST_PASSWORD", "demo")
+
+
+@app.route("/preview")
+def preview_page():
+    return send_file(Path(__file__).parent / "plugin-preview.html")
+
+
+@app.route("/preview/transcribe.js")
+def preview_js():
+    return send_file(
+        str(PLUGIN_DIR / "assets" / "js" / "transcribe.js"),
+        mimetype="application/javascript",
+    )
+
+
+@app.route("/api/validate-password", methods=["POST"])
+def validate_password():
+    """Mock WordPress AJAX password validation for plugin preview."""
+    password = request.form.get("password", "")
+    if password == AST_PREVIEW_PASSWORD:
+        return jsonify({"success": True, "data": {"message": "Password validated"}})
+    return jsonify({"success": False, "data": {"message": "Invalid password"}})
+
+
+@app.route("/api/preview-info")
+def preview_info():
+    return jsonify({"password": AST_PREVIEW_PASSWORD})
 
 
 if __name__ == "__main__":

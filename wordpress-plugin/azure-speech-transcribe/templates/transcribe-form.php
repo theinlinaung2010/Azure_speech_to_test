@@ -34,6 +34,7 @@
                     <div id="ast-progress-fill" class="ast-progress-fill"></div>
                 </div>
                 <p id="ast-status-text" class="ast-status-text"></p>
+                <button id="ast-stop-btn" class="ast-button ast-button-danger" style="display: none;"><?php _e('Stop Transcription', 'azure-speech-transcribe'); ?></button>
             </div>
 
             <!-- Transcription Display -->

@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plugin Preview – Azure Speech Transcribe</title>
+    <style>
+      /* WordPress page simulation */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #f0f0f1;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+      .preview-bar {
+        background: #1d2327;
+        color: #a7aaad;
+        padding: 0 16px;
+        height: 32px;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+      .preview-bar a {
+        color: #a7aaad;
+        text-decoration: none;
+      }
+      .preview-bar a:hover {
+        color: #fff;
+      }
+      .preview-badge {
+        background: #d63638;
+        color: #fff;
+        padding: 1px 7px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-right: 10px;
+        letter-spacing: 0.5px;
+      }
+      .wp-page {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 40px 20px 60px;
+      }
+      .wp-page-title {
+        font-size: 26px;
+        color: #1d2327;
+        font-weight: 600;
+        margin-bottom: 20px;
+      }
+      .preview-notice {
+        background: #fff;
+        border-left: 4px solid #72aee6;
+        padding: 10px 14px;
+        margin-bottom: 24px;
+        font-size: 13px;
+        color: #50575e;
+        line-height: 1.5;
+      }
+      .preview-notice code {
+        background: #f6f7f7;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .preview-notice .sep {
+        margin: 0 6px;
+        color: #c3c4c7;
+      }
+
+      /* ── transcribe.css ─────────────────────────────────────────────────── */
+      .ast-container {
+        max-width: 900px;
+        margin: 40px auto;
+        padding: 20px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }
+      .ast-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        padding: 30px;
+      }
+      .ast-card h2 {
+        margin-top: 0;
+        margin-bottom: 30px;
+        color: #333;
+        font-size: 28px;
+      }
+      .ast-section {
+        margin-bottom: 30px;
+      }
+      .ast-input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 16px;
+        margin-bottom: 15px;
+        box-sizing: border-box;
+      }
+      .ast-input:focus {
+        outline: none;
+        border-color: #0073aa;
+      }
+      .ast-button {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+      }
+      .ast-button-primary {
+        background-color: #0073aa;
+        color: #fff;
+      }
+      .ast-button-primary:hover {
+        background-color: #005a87;
+      }
+      .ast-button-primary:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+      .ast-button-secondary {
+        background-color: #f7f7f7;
+        color: #333;
+        border: 1px solid #ddd;
+      }
+      .ast-button-secondary:hover {
+        background-color: #e7e7e7;
+      }
+      .ast-button-danger {
+        background-color: #d63638;
+        color: #fff;
+        margin-top: 12px;
+        width: 100%;
+      }
+      .ast-button-danger:hover {
+        background-color: #b32d2e;
+      }
+      .ast-button-danger:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+      .ast-button-small {
+        padding: 8px 16px;
+        font-size: 14px;
+      }
+      .ast-upload-area {
+        border: 2px dashed #ddd;
+        border-radius: 8px;
+        padding: 40px;
+        text-align: center;
+        transition: all 0.3s;
+        background: #fafafa;
+      }
+      .ast-upload-area.ast-drag-over {
+        border-color: #0073aa;
+        background: #f0f8ff;
+      }
+      .ast-upload-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .ast-upload-icon {
+        width: 64px;
+        height: 64px;
+        color: #999;
+        margin-bottom: 20px;
+      }
+      .ast-upload-text {
+        font-size: 18px;
+        color: #333;
+        margin: 0 0 10px 0;
+      }
+      .ast-upload-subtext {
+        font-size: 14px;
+        color: #999;
+        margin: 0 0 20px 0;
+      }
+      .ast-upload-info {
+        font-size: 12px;
+        color: #999;
+        margin-top: 15px;
+      }
+      .ast-selected-file {
+        margin-top: 20px;
+        padding: 15px;
+        background: #f0f8ff;
+        border-radius: 4px;
+        text-align: center;
+      }
+      .ast-progress-bar {
+        width: 100%;
+        height: 8px;
+        background: #f0f0f0;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 10px;
+      }
+      .ast-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #0073aa, #00a0d2);
+        transition: width 0.3s;
+      }
+      .ast-status-text {
+        text-align: center;
+        color: #666;
+        font-size: 14px;
+      }
+      .ast-transcription-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+      .ast-transcription-header h3 {
+        margin: 0;
+        color: #333;
+      }
+      .ast-actions {
+        display: flex;
+        gap: 10px;
+      }
+      .ast-transcription-text {
+        width: 100%;
+        min-height: 400px;
+        padding: 15px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-family: "Courier New", monospace;
+        font-size: 14px;
+        line-height: 1.6;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      .ast-transcription-text:focus {
+        outline: none;
+        border-color: #0073aa;
+      }
+      .ast-error {
+        padding: 12px;
+        background: #ffebee;
+        color: #c62828;
+        border-radius: 4px;
+        margin-top: 15px;
+      }
+      @media (max-width: 768px) {
+        .ast-container {
+          padding: 10px;
+        }
+        .ast-card {
+          padding: 20px;
+        }
+        .ast-upload-area {
+          padding: 30px 20px;
+        }
+        .ast-transcription-header {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 15px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Simulated WordPress admin bar -->
+    <div class="preview-bar">
+      <span>
+        <span class="preview-badge">Preview</span>
+        Azure Speech Transcribe &mdash; Plugin Preview Mode
+      </span>
+      <span>
+        Password: <code id="preview-password" style="color:#fff; background:#2c3338; padding:1px 6px; border-radius:3px;">loading…</code>
+        <span class="sep">·</span>
+        API: <a href="/api/health" target="_blank">http://localhost:3333</a>
+      </span>
+    </div>
+
+    <!-- Simulated WordPress page content area -->
+    <div class="wp-page">
+      <h1 class="wp-page-title">Sample Page</h1>
+
+      <div class="preview-notice">
+        Renders the exact plugin HTML, CSS, and JS as served in production.
+        Password validation goes to <code>/api/validate-password</code> (Flask mock) instead of WordPress AJAX.
+        <span class="sep">·</span>
+        Set <code>AST_PASSWORD</code> env var to change the password (default: <code>demo</code>).
+      </div>
+
+      <!-- Plugin shortcode output: [azure_transcribe] -->
+      <div class="ast-container">
+        <div class="ast-card">
+          <h2>Audio Transcription</h2>
+
+          <!-- Password Section -->
+          <div id="ast-password-section" class="ast-section">
+            <label for="ast-password">Enter Password</label>
+            <input type="password" id="ast-password" class="ast-input" placeholder="Password" />
+            <button id="ast-validate-btn" class="ast-button ast-button-primary">Validate</button>
+            <div id="ast-password-error" class="ast-error" style="display:none;"></div>
+          </div>
+
+          <!-- Upload Section (hidden initially) -->
+          <div id="ast-upload-section" class="ast-section" style="display: none;">
+            <div class="ast-upload-area" id="ast-upload-area">
+              <input type="file" id="ast-file-input" accept=".wav,.m4a" style="display: none;" />
+              <div class="ast-upload-content">
+                <svg class="ast-upload-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <p class="ast-upload-text">Drag and drop audio file here</p>
+                <p class="ast-upload-subtext">or</p>
+                <button type="button" id="ast-select-file-btn" class="ast-button ast-button-secondary">Select File</button>
+                <p class="ast-upload-info">Supported formats: WAV, M4A</p>
+              </div>
+              <div id="ast-selected-file" class="ast-selected-file" style="display: none;"></div>
+            </div>
+
+            <button id="ast-upload-btn" class="ast-button ast-button-primary" style="display: none;">Start Transcription</button>
+
+            <!-- Progress Section -->
+            <div id="ast-progress-section" style="display: none;">
+              <div class="ast-progress-bar">
+                <div id="ast-progress-fill" class="ast-progress-fill"></div>
+              </div>
+              <p id="ast-status-text" class="ast-status-text"></p>
+              <button id="ast-stop-btn" class="ast-button ast-button-danger" style="display: none;">Stop Transcription</button>
+            </div>
+
+            <!-- Transcription Display -->
+            <div id="ast-transcription-section" style="display: none;">
+              <div class="ast-transcription-header">
+                <h3>Transcription</h3>
+                <div class="ast-actions">
+                  <button id="ast-copy-btn" class="ast-button ast-button-small" title="Copy to clipboard">Copy</button>
+                  <button id="ast-download-btn" class="ast-button ast-button-small" style="display: none;">Download</button>
+                </div>
+              </div>
+              <textarea id="ast-transcription-text" class="ast-transcription-text" readonly></textarea>
+            </div>
+
+            <div id="ast-error-section" class="ast-error" style="display: none;"></div>
+          </div>
+        </div>
+      </div>
+      <!-- end [azure_transcribe] -->
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script>
+      // Mirrors wp_localize_script('ast-script', 'astData', [...]) from class-shortcode.php
+      var astData = {
+        ajaxUrl: "/api/validate-password",
+        nonce: "preview-nonce",
+        apiUrl: "http://localhost:3333",
+        maxFileSize: 200 * 1024 * 1024,
+        strings: {
+          passwordRequired: "Password is required",
+          fileRequired: "Please select a file",
+          invalidFileType: "Invalid file type. Only WAV and M4A files allowed",
+          fileTooLarge: "File is too large",
+          uploadError: "Upload failed. Please try again",
+          connectionError: "Connection error. Please check your internet connection",
+          copiedToClipboard: "Copied to clipboard!",
+        },
+      };
+    </script>
+    <script src="/preview/transcribe.js"></script>
+    <script>
+      fetch("/api/preview-info")
+        .then((r) => r.json())
+        .then((d) => {
+          document.getElementById("preview-password").textContent = d.password;
+        })
+        .catch(() => {
+          document.getElementById("preview-password").textContent = "demo";
+        });
+    </script>
+  </body>
+</html>

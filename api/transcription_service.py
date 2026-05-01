@@ -3,10 +3,14 @@ import azure.cognitiveservices.speech as speechsdk
 import datetime
 from pathlib import Path
 from pydub import AudioSegment
+from dotenv import load_dotenv
 
 
 class TranscriptionService:
     def __init__(self):
+        # Load environment variables from .env file
+        load_dotenv()
+        
         self.speech_key = os.environ.get("SPEECH_KEY")
         self.speech_region = os.environ.get("SPEECH_REGION")
 
@@ -20,14 +24,15 @@ class TranscriptionService:
         audio = AudioSegment.from_file(m4a_file, format="m4a")
         audio.export(wav_file, format="wav")
 
-    def transcribe_file(self, audio_file, output_file, on_segment_callback=None):
+    def transcribe_file(self, audio_file, output_file, on_segment_callback=None, stop_event=None, on_started_callback=None):
         """
         Transcribe audio file with streaming callbacks
 
         Args:
             audio_file: Path to audio file (WAV or M4A)
             output_file: Path to save transcript
-            on_segment_callback: Callback function(timestamp, text) called for each segment
+            on_segment_callback: Callback function(timestamp, text, offset_seconds) called for each segment
+            on_started_callback: Callback function(duration_seconds) called before recognition starts
         """
         audio_path = Path(audio_file)
 
@@ -36,6 +41,9 @@ class TranscriptionService:
             wav_file = audio_path.with_suffix(".wav")
             self.convert_m4a_to_wav(str(audio_path), str(wav_file))
             audio_file = str(wav_file)
+
+        # Get total duration for real progress tracking
+        total_duration = len(AudioSegment.from_file(audio_file)) / 1000.0
 
         # Configure speech recognition
         speech_config = speechsdk.SpeechConfig(
@@ -84,7 +92,7 @@ class TranscriptionService:
 
             # Call callback if provided
             if on_segment_callback:
-                on_segment_callback(timestamp, text)
+                on_segment_callback(timestamp, text, offset)
 
         def canceled_cb(evt):
             """Callback for cancellation"""
@@ -103,15 +111,20 @@ class TranscriptionService:
         speech_recognizer.canceled.connect(canceled_cb)
         speech_recognizer.session_stopped.connect(stopped_cb)
 
-        # Start continuous recognition
+        # Notify caller of total duration then start recognition
+        if on_started_callback:
+            on_started_callback(total_duration)
         speech_recognizer.start_continuous_recognition()
 
-        # Wait for completion
+        # Wait for completion or stop signal
+        import time
+        stop_requested = False
         while not done:
-            import time
-
+            if stop_event and stop_event.is_set() and not stop_requested:
+                stop_requested = True
+                speech_recognizer.stop_continuous_recognition()
             time.sleep(0.5)
 
-        # Stop recognition
-        speech_recognizer.stop_continuous_recognition()
+        if not stop_requested:
+            speech_recognizer.stop_continuous_recognition()
         f.close()

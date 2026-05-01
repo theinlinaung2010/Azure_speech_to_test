@@ -56,6 +56,9 @@
 
     // Download button
     $("#ast-download-btn").on("click", downloadTranscript);
+
+    // Stop button
+    $("#ast-stop-btn").on("click", stopTranscription);
   }
 
   function validatePassword() {
@@ -167,10 +170,24 @@
     });
   }
 
+  function stopTranscription() {
+    if (!currentJobId) return;
+    const btn = $("#ast-stop-btn");
+    btn.prop("disabled", true).text("Stopping...");
+    $.ajax({
+      url: astData.apiUrl + "/api/stop/" + currentJobId,
+      method: "POST",
+      error: function () {
+        btn.prop("disabled", false).text("Stop Transcription");
+      },
+    });
+  }
+
   function startStreaming(jobId) {
     updateStatus("Streaming transcription...", 25);
     $("#ast-transcription-section").show();
     $("#ast-transcription-text").val("");
+    $("#ast-stop-btn").prop("disabled", false).text("Stop Transcription").show();
 
     const streamUrl = astData.apiUrl + "/api/stream/" + jobId;
     eventSource = new EventSource(streamUrl);
@@ -207,7 +224,20 @@
 
       case "completed":
         updateStatus("Completed!", 100);
+        $("#ast-stop-btn").hide();
         $("#ast-download-btn").show();
+        $("#ast-upload-btn").prop("disabled", false);
+        if (eventSource) {
+          eventSource.close();
+        }
+        break;
+
+      case "stopped":
+        updateStatus("Stopped.", 100);
+        $("#ast-stop-btn").hide();
+        if (event.has_content) {
+          $("#ast-download-btn").show();
+        }
         $("#ast-upload-btn").prop("disabled", false);
         if (eventSource) {
           eventSource.close();
@@ -216,6 +246,7 @@
 
       case "error":
         showError("#ast-error-section", event.message || "Transcription error");
+        $("#ast-stop-btn").hide();
         resetUpload();
         if (eventSource) {
           eventSource.close();

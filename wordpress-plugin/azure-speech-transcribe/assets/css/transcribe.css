@@ -71,6 +71,22 @@
   background-color: #e7e7e7;
 }
 
+.ast-button-danger {
+  background-color: #d63638;
+  color: #fff;
+  margin-top: 12px;
+  width: 100%;
+}
+
+.ast-button-danger:hover {
+  background-color: #b32d2e;
+}
+
+.ast-button-danger:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
 .ast-button-small {
   padding: 8px 16px;
   font-size: 14px;
