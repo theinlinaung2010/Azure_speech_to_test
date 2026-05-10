@@ -217,9 +217,14 @@
         updateStatus("Transcription started...", 30);
         break;
 
+      case "progress": {
+        const pct = event.total > 0 ? 30 + (event.processed / event.total) * 65 : 30;
+        updateStatus("Processing... " + formatTime(event.processed) + " / " + formatTime(event.total), pct);
+        break;
+      }
+
       case "segment":
         appendTranscription(event.timestamp, event.text);
-        updateProgress(50); // Segments coming in
         break;
 
       case "completed":
@@ -306,6 +311,13 @@
 
   function hideError(selector) {
     $(selector).hide();
+  }
+
+  function formatTime(seconds) {
+    const s = Math.floor(seconds);
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return String(m).padStart(2, "0") + ":" + String(rem).padStart(2, "0");
   }
 
   function formatFileSize(bytes) {

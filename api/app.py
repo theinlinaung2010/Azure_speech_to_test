@@ -85,6 +85,20 @@ def get_stop_event(job_id):
         return stop_events.get(job_id)
 
 
+def cleanup_job_resources(job_id, delay=300):
+    """Release in-memory resources for a finished job after a short delay."""
+    def _cleanup():
+        time.sleep(delay)
+        with queues_lock:
+            event_queues.pop(job_id, None)
+        with stop_events_lock:
+            stop_events.pop(job_id, None)
+        with jobs_lock:
+            jobs.pop(job_id, None)
+        logger.info(f"Released in-memory resources for job: {job_id}")
+    threading.Thread(target=_cleanup, daemon=True).start()
+
+
 def emit_event(job_id, event_type, data=None):
     """Emit an event to the SSE stream for a job"""
     q = get_event_queue(job_id)
@@ -161,13 +175,17 @@ def process_transcription(job_id):
         def on_segment(timestamp, text, offset_seconds):
             emit_event(job_id, "segment", {"timestamp": timestamp, "text": text, "offset": offset_seconds})
 
+        def on_progress(processed_seconds, total_seconds):
+            emit_event(job_id, "progress", {"processed": processed_seconds, "total": total_seconds})
+
         # Run transcription
         stop_event = create_stop_event(job_id)
         transcription_service.transcribe_file(
-            str(filepath), str(output_file), on_segment, stop_event=stop_event, on_started_callback=on_started
+            str(filepath), str(output_file), on_segment, stop_event=stop_event, on_started_callback=on_started, on_progress_callback=on_progress
         )
 
         if stop_event.is_set():
+
             has_content = output_file.exists() and output_file.stat().st_size > 0
             update_job(job_id, {
                 "status": "stopped",
@@ -190,6 +208,10 @@ def process_transcription(job_id):
         update_job(job_id, {"status": "error", "error": str(e)})
         emit_event(job_id, "error", {"message": str(e)})
 
+    finally:
+        # Schedule release of in-memory resources 5 minutes after job finishes
+        cleanup_job_resources(job_id, delay=300)
+
 
 @app.route("/api/stop/<job_id>", methods=["POST"])
 def stop_transcription(job_id):
@@ -197,8 +219,8 @@ def stop_transcription(job_id):
     job = get_job(job_id)
     if not job:
         return jsonify({"error": "Job not found"}), 404
-    if job["status"] != "processing":
-        return jsonify({"error": "Job is not currently processing"}), 400
+    if job["status"] in ("completed", "stopped", "error"):
+        return jsonify({"error": "Job is not currently running"}), 400
     event = get_stop_event(job_id)
     if event:
         event.set()
@@ -226,8 +248,8 @@ def stream_events(job_id):
                 event = q.get(timeout=1)
                 yield f"data: {json.dumps(event)}\n\n"
 
-                # Stop streaming if job is completed or errored
-                if event["type"] in ["completed", "error"]:
+                # Stop streaming if job is done
+                if event["type"] in ["completed", "stopped", "error"]:
                     break
 
             except queue.Empty:
@@ -239,7 +261,7 @@ def stream_events(job_id):
 
                 # Check if job is done
                 job = get_job(job_id)
-                if job and job["status"] in ["completed", "error"]:
+                if job and job["status"] in ["completed", "stopped", "error"]:
                     break
 
     return Response(generate(), mimetype="text/event-stream")
