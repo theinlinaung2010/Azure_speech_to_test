@@ -4,7 +4,14 @@
   let passwordValidated = false;
   let selectedFile = null;
   let currentJobId = null;
+  let audioDuration = 0;
   let eventSource = null;
+  let streamFinished = false;
+  let retryCount = 0;
+  let retryTimeout = null;
+
+  const MAX_SSE_RETRIES = 5;
+  const SSE_INITIAL_RETRY_DELAY_MS = 2000;
 
   $(document).ready(function () {
     initEventHandlers();
@@ -48,8 +55,22 @@
       }
     });
 
-    // Upload button
-    $("#ast-upload-btn").on("click", startTranscription);
+    // Upload button (step 1: upload file)
+    $("#ast-upload-btn").on("click", uploadFile);
+
+    // Time range inputs — format on blur
+    $("#ast-start-time, #ast-end-time").on("blur", function () {
+      const secs = parseMMSS($(this).val());
+      if (secs !== null) {
+        $(this).val(formatTime(secs)).removeClass("ast-input-error");
+      } else {
+        $(this).addClass("ast-input-error");
+      }
+      hideError("#ast-range-error");
+    });
+
+    // Start transcription button (step 2: confirm range and begin)
+    $("#ast-start-btn").on("click", beginTranscription);
 
     // Copy button
     $("#ast-copy-btn").on("click", copyToClipboard);
@@ -120,10 +141,12 @@
       .html("<strong>" + file.name + "</strong> (" + formatFileSize(file.size) + ")")
       .show();
     $("#ast-upload-btn").show();
+    $("#ast-range-section").hide();
     hideError("#ast-error-section");
   }
 
-  function startTranscription() {
+  // Step 1: Upload the file, get duration, show range picker
+  function uploadFile() {
     if (!selectedFile) {
       showError("#ast-error-section", astData.strings.fileRequired);
       return;
@@ -132,46 +155,96 @@
     const formData = new FormData();
     formData.append("file", selectedFile);
 
-    // Show progress
-    $("#ast-upload-btn").prop("disabled", true);
-    $("#ast-progress-section").show();
-    updateStatus("Uploading...", 10);
+    $("#ast-upload-btn").prop("disabled", true).text("Uploading\u2026");
+    hideError("#ast-error-section");
 
-    // Upload file
     $.ajax({
       url: astData.apiUrl + "/api/upload",
       method: "POST",
       data: formData,
       processData: false,
       contentType: false,
-      xhr: function () {
-        const xhr = new window.XMLHttpRequest();
-        xhr.upload.addEventListener(
-          "progress",
-          function (e) {
-            if (e.lengthComputable) {
-              const percentComplete = (e.loaded / e.total) * 100;
-              updateProgress(percentComplete * 0.2); // Upload is 20% of total
-            }
-          },
-          false,
-        );
-        return xhr;
-      },
       success: function (response) {
         currentJobId = response.job_id;
-        updateStatus("Processing...", 20);
-        startStreaming(currentJobId);
+        audioDuration = response.duration || 0;
+        $("#ast-upload-btn").prop("disabled", false).text("Upload File");
+        showRangeSection(audioDuration);
       },
       error: function () {
+        $("#ast-upload-btn").prop("disabled", false).text("Upload File");
         showError("#ast-error-section", astData.strings.uploadError);
-        resetUpload();
+      },
+    });
+  }
+
+  function showRangeSection(duration) {
+    var maxLabel = duration > 0 ? formatTime(duration) : "unknown";
+    $("#ast-max-duration-text").text("Max duration: " + maxLabel);
+    $("#ast-start-time").val("00:00:00").removeClass("ast-input-error");
+    $("#ast-end-time").val(duration > 0 ? formatTime(duration) : "00:00:00").removeClass("ast-input-error");
+    hideError("#ast-range-error");
+    $("#ast-range-section").slideDown();
+  }
+
+  // Step 2: Validate range, POST /api/start, then stream
+  function beginTranscription() {
+    if (!currentJobId) return;
+
+    const startSecs = parseMMSS($("#ast-start-time").val());
+    const endSecs   = parseMMSS($("#ast-end-time").val());
+
+    if (startSecs === null) {
+      $("#ast-start-time").addClass("ast-input-error");
+      showError("#ast-range-error", "Invalid start time. Use HH:MM:SS format.");
+      return;
+    }
+    if (endSecs === null) {
+      $("#ast-end-time").addClass("ast-input-error");
+      showError("#ast-range-error", "Invalid end time. Use HH:MM:SS format.");
+      return;
+    }
+    if (startSecs >= endSecs) {
+      showError("#ast-range-error", "Start time must be before end time.");
+      return;
+    }
+    if (audioDuration > 0 && endSecs > audioDuration) {
+      $("#ast-end-time").addClass("ast-input-error");
+      showError("#ast-range-error", "End time exceeds audio duration (" + formatTime(audioDuration) + ").");
+      return;
+    }
+
+    hideError("#ast-range-error");
+    $("#ast-start-btn").prop("disabled", true).text("Starting\u2026");
+    $("#ast-upload-btn").prop("disabled", true);
+
+    $.ajax({
+      url: astData.apiUrl + "/api/start/" + currentJobId,
+      method: "POST",
+      contentType: "application/json",
+      data: JSON.stringify({ start_seconds: startSecs, end_seconds: endSecs }),
+      success: function () {
+        $("#ast-start-btn").prop("disabled", false).text("Start Transcription");
+        $("#ast-range-section").slideUp();
+        $("#ast-progress-section").show();
+        updateStatus("Processing\u2026", 20);
+        startStreaming(currentJobId);
+      },
+      error: function (xhr) {
+        $("#ast-start-btn").prop("disabled", false).text("Start Transcription");
+        $("#ast-upload-btn").prop("disabled", false);
+        var msg = (xhr.responseJSON && xhr.responseJSON.error) ? xhr.responseJSON.error : astData.strings.uploadError;
+        showError("#ast-range-error", msg);
       },
     });
   }
 
   function stopTranscription() {
     if (!currentJobId) return;
+    // Cancel any pending retry
+    if (retryTimeout) {
+      clearTimeout(retryTimeout);
+      retryTimeout = null;
+    }
     const btn = $("#ast-stop-btn");
     btn.prop("disabled", true).text("Stopping...");
     $.ajax({
@@ -184,10 +257,20 @@
   }
 
   function startStreaming(jobId) {
+    streamFinished = false;
+    retryCount = 0;
     updateStatus("Streaming transcription...", 25);
     $("#ast-transcription-section").show();
     $("#ast-transcription-text").val("");
     $("#ast-stop-btn").prop("disabled", false).text("Stop Transcription").show();
+    connectStream(jobId);
+  }
+
+  function connectStream(jobId) {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
 
     const streamUrl = astData.apiUrl + "/api/stream/" + jobId;
     eventSource = new EventSource(streamUrl);
@@ -198,12 +281,29 @@
     };
 
     eventSource.onerror = function () {
-      if (eventSource.readyState === EventSource.CLOSED) {
-        console.log("Stream closed");
+      // If a terminal event was already handled, the EventSource was closed
+      // deliberately — this error callback is a spurious after-close fire.
+      if (streamFinished) return;
+
+      eventSource.close();
+      eventSource = null;
+
+      if (retryCount < MAX_SSE_RETRIES) {
+        const delay = Math.min(SSE_INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCount), 15000);
+        retryCount++;
+        updateStatus(
+          "Connection lost. Reconnecting in " + Math.round(delay / 1000) + "s\u2026 (" + retryCount + "/" + MAX_SSE_RETRIES + ")"
+        );
+        hideError("#ast-error-section");
+        retryTimeout = setTimeout(function () {
+          retryTimeout = null;
+          connectStream(jobId);
+        }, delay);
       } else {
         showError("#ast-error-section", astData.strings.connectionError);
+        $("#ast-stop-btn").hide();
+        resetUpload();
       }
-      eventSource.close();
     };
   }
 
@@ -229,6 +329,8 @@
 
       case "completed":
         updateStatus("Completed!", 100);
+        streamFinished = true;
+        retryCount = 0;
         $("#ast-stop-btn").hide();
         $("#ast-download-btn").show();
         $("#ast-upload-btn").prop("disabled", false);
@@ -239,6 +341,8 @@
 
       case "stopped":
         updateStatus("Stopped.", 100);
+        streamFinished = true;
+        retryCount = 0;
         $("#ast-stop-btn").hide();
         if (event.has_content) {
           $("#ast-download-btn").show();
@@ -251,6 +355,7 @@
 
       case "error":
         showError("#ast-error-section", event.message || "Transcription error");
+        streamFinished = true;
         $("#ast-stop-btn").hide();
         resetUpload();
         if (eventSource) {
@@ -315,9 +420,34 @@
 
   function formatTime(seconds) {
     const s = Math.floor(seconds);
-    const m = Math.floor(s / 60);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
     const rem = s % 60;
-    return String(m).padStart(2, "0") + ":" + String(rem).padStart(2, "0");
+    return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0") + ":" + String(rem).padStart(2, "0");
+  }
+
+  /**
+   * Parse a "MM:SS" or "H:MM:SS" string into total seconds.
+   * Returns null if the format is invalid.
+   */
+  function parseMMSS(str) {
+    if (!str) return null;
+    str = str.trim();
+    const parts = str.split(":");
+    if (parts.length === 2) {
+      const m = parseInt(parts[0], 10);
+      const s = parseInt(parts[1], 10);
+      if (isNaN(m) || isNaN(s) || s < 0 || s > 59 || m < 0) return null;
+      return m * 60 + s;
+    }
+    if (parts.length === 3) {
+      const h = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      const s = parseInt(parts[2], 10);
+      if (isNaN(h) || isNaN(m) || isNaN(s) || s < 0 || s > 59 || m < 0 || m > 59 || h < 0) return null;
+      return h * 3600 + m * 60 + s;
+    }
+    return null;
   }
 
   function formatFileSize(bytes) {

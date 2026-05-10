@@ -55,12 +55,17 @@ class TranscriptionService:
         logger.warning("ffprobe could not determine duration")
         return 0.0
 
-    def transcribe_file(self, audio_file, output_file, on_segment_callback=None, stop_event=None, on_started_callback=None, on_progress_callback=None):
+    def transcribe_file(self, audio_file, output_file, on_segment_callback=None, stop_event=None, on_started_callback=None, on_progress_callback=None, start_seconds=0.0, end_seconds=None):
         audio_path = Path(audio_file)
 
         # Duration via ffprobe — fast metadata read, no decoding required
         total_duration = self._get_duration(str(audio_path))
-        logger.info(f"Audio: {audio_path.name}, duration={total_duration:.1f}s")
+
+        # Resolve clip bounds
+        clip_start = max(0.0, float(start_seconds) if start_seconds else 0.0)
+        clip_end = min(total_duration, float(end_seconds)) if end_seconds is not None else total_duration
+        clip_duration = max(0.0, clip_end - clip_start)
+        logger.info(f"Audio: {audio_path.name}, duration={total_duration:.1f}s, clip=[{clip_start:.1f}s, {clip_end:.1f}s]")
 
         speech_config = speechsdk.SpeechConfig(
             subscription=self.speech_key, region=self.speech_region
@@ -96,9 +101,11 @@ class TranscriptionService:
             if not text:
                 return
             segment_count += 1
+            # offset is relative to what Azure received; add clip_start for absolute time
             offset = result.offset / 10000000
             duration = result.duration / 10000000
-            start_time = datetime.timedelta(seconds=offset)
+            abs_offset = offset + clip_start
+            start_time = datetime.timedelta(seconds=abs_offset)
             end_time = start_time + datetime.timedelta(seconds=duration)
             timestamp = "{} --> {}".format(
                 str(start_time).split(".")[0], str(end_time).split(".")[0]
@@ -108,7 +115,7 @@ class TranscriptionService:
             f.flush()
             logger.info(f"Segment {segment_count} [{timestamp}]: {text[:60]}{'...' if len(text) > 60 else ''}")
             if on_segment_callback:
-                on_segment_callback(timestamp, text, offset)
+                on_segment_callback(timestamp, text, abs_offset)
             with tail_lock:
                 tail_time[0] = max(tail_time[0], offset + duration)
 
@@ -132,17 +139,22 @@ class TranscriptionService:
         # the user sees the progress bar immediately.
         logger.info("Starting continuous recognition")
         if on_started_callback:
-            on_started_callback(total_duration)
+            on_started_callback(clip_duration)
         speech_recognizer.start_continuous_recognition()
+
+        # Build ffmpeg command with optional input-seeking and clip duration.
+        ffmpeg_cmd = ["ffmpeg"]
+        if clip_start > 0:
+            ffmpeg_cmd += ["-ss", str(clip_start)]
+        ffmpeg_cmd += ["-i", str(audio_path)]
+        if end_seconds is not None:
+            ffmpeg_cmd += ["-t", str(clip_duration)]
+        ffmpeg_cmd += ["-ar", "16000", "-ac", "1", "-f", "s16le", "pipe:1"]
 
         # Stream ffmpeg raw PCM output directly into the push stream.
         # Conversion and transcription happen concurrently — no temp WAV file needed.
         proc = subprocess.Popen(
-            [
-                "ffmpeg", "-i", str(audio_path),
-                "-ar", "16000", "-ac", "1", "-f", "s16le",
-                "pipe:1",
-            ],
+            ffmpeg_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -192,7 +204,7 @@ class TranscriptionService:
                 head_time += len(frames) / _CHUNK_BYTES
 
                 if on_progress_callback and head_time - last_progress_head >= 2.0:
-                    on_progress_callback(head_time, total_duration)
+                    on_progress_callback(head_time, clip_duration)
                     last_progress_head = head_time
 
         finally:

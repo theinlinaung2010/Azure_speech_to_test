@@ -93,6 +93,55 @@
         padding: 10px 16px;
         font-size: 14px;
       }
+      .ast-range-section {
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 20px;
+        background: #fafafa;
+      }
+      .ast-range-section h3 {
+        margin: 0 0 12px 0;
+        color: #333;
+        font-size: 16px;
+      }
+      .ast-range-max {
+        font-size: 13px;
+        color: #555;
+        margin-bottom: 14px;
+      }
+      .ast-range-row {
+        display: flex;
+        gap: 24px;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        margin-bottom: 12px;
+      }
+      .ast-range-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .ast-range-field label {
+        font-size: 13px;
+        color: #444;
+        font-weight: 500;
+      }
+      .ast-time-input {
+        width: 110px;
+        padding: 8px 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 15px;
+        font-family: monospace;
+        text-align: center;
+      }
+      .ast-time-input:focus {
+        outline: none;
+        border-color: #0073aa;
+      }
+      .ast-time-input.ast-input-error {
+        border-color: #d63638;
+      }
       .ast-upload-area {
         border: 2px dashed #ddd;
         border-radius: 8px;
@@ -246,7 +295,25 @@
             <div id="ast-selected-file" class="ast-selected-file" style="display: none;"></div>
           </div>
 
-          <button id="ast-upload-btn" class="ast-button ast-button-primary" style="display: none;">Start Transcription</button>
+          <button id="ast-upload-btn" class="ast-button ast-button-primary" style="display: none;">Upload File</button>
+
+          <!-- Duration Range Section -->
+          <div id="ast-range-section" class="ast-range-section" style="display: none; margin-top: 24px;">
+            <h3>Duration Range</h3>
+            <p id="ast-max-duration-text" class="ast-range-max">Max duration: detecting…</p>
+            <div class="ast-range-row">
+              <div class="ast-range-field">
+                <label for="ast-start-time">Start (HH:MM:SS)</label>
+                <input type="text" id="ast-start-time" class="ast-time-input" value="00:00:00" placeholder="00:00:00" maxlength="8" />
+              </div>
+              <div class="ast-range-field">
+                <label for="ast-end-time">End (HH:MM:SS)</label>
+                <input type="text" id="ast-end-time" class="ast-time-input" value="00:00:00" placeholder="00:00:00" maxlength="8" />
+              </div>
+            </div>
+            <div id="ast-range-error" class="ast-error" style="display:none;"></div>
+            <button id="ast-start-btn" class="ast-button ast-button-primary" style="margin-top: 16px;">Start Transcription</button>
+          </div>
 
           <!-- Progress Section -->
           <div id="ast-progress-section" style="display: none;">

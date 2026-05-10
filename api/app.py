@@ -132,7 +132,10 @@ def upload_file():
     file.save(filepath)
     logger.info(f"File uploaded: {filename} (Job: {job_id})")
 
-    # Initialize job
+    # Get audio duration via ffprobe
+    duration = transcription_service._get_duration(str(filepath))
+
+    # Initialize job (transcription not started yet)
     with jobs_lock:
         jobs[job_id] = {
             "id": job_id,
@@ -141,17 +144,52 @@ def upload_file():
             "status": "uploaded",
             "created_at": datetime.now().isoformat(),
             "output_file": None,
+            "duration": duration,
         }
 
     # Create event queue for this job
     create_event_queue(job_id)
 
-    # Start transcription in background thread
+    return jsonify({"job_id": job_id, "filename": filename, "duration": duration}), 200
+
+
+@app.route("/api/start/<job_id>", methods=["POST"])
+def start_transcription_job(job_id):
+    """Begin transcription for an uploaded job, optionally with a time range."""
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    if job["status"] != "uploaded":
+        return jsonify({"error": "Job is not in uploaded state"}), 400
+
+    data = request.get_json(silent=True) or {}
+    start_seconds = data.get("start_seconds", 0.0)
+    end_seconds = data.get("end_seconds", None)
+
+    total_duration = job.get("duration", 0)
+
+    # Validate range
+    try:
+        start_seconds = float(start_seconds)
+        end_seconds = float(end_seconds) if end_seconds is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid time range values"}), 400
+
+    if start_seconds < 0:
+        return jsonify({"error": "Start time cannot be negative"}), 400
+    if end_seconds is not None:
+        if total_duration > 0 and end_seconds > total_duration:
+            return jsonify({"error": f"End time ({end_seconds:.1f}s) exceeds audio duration ({total_duration:.1f}s)"}), 400
+        if start_seconds >= end_seconds:
+            return jsonify({"error": "Start time must be less than end time"}), 400
+
+    update_job(job_id, {"status": "queued", "start_seconds": start_seconds, "end_seconds": end_seconds})
+
     thread = threading.Thread(target=process_transcription, args=(job_id,))
     thread.daemon = True
     thread.start()
 
-    return jsonify({"job_id": job_id, "filename": filename}), 200
+    return jsonify({"message": "Transcription started"}), 200
 
 
 def process_transcription(job_id):
@@ -163,6 +201,8 @@ def process_transcription(job_id):
             return
 
         filepath = Path(job["filepath"])
+        start_seconds = job.get("start_seconds", 0.0)
+        end_seconds = job.get("end_seconds", None)
         logger.info(f"Starting transcription for job: {job_id}")
 
         # Setup output file
@@ -181,7 +221,8 @@ def process_transcription(job_id):
         # Run transcription
         stop_event = create_stop_event(job_id)
         transcription_service.transcribe_file(
-            str(filepath), str(output_file), on_segment, stop_event=stop_event, on_started_callback=on_started, on_progress_callback=on_progress
+            str(filepath), str(output_file), on_segment, stop_event=stop_event, on_started_callback=on_started, on_progress_callback=on_progress,
+            start_seconds=start_seconds, end_seconds=end_seconds
         )
 
         if stop_event.is_set():
@@ -234,7 +275,19 @@ def stream_events(job_id):
     def generate():
         q = get_event_queue(job_id)
         if not q:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Job not found'})}\n\n"
+            # Queue gone — either job never existed or already cleaned up.
+            # Check whether the job itself is still in memory and synthesize
+            # a terminal event so reconnecting clients don't hang.
+            job = get_job(job_id)
+            if job and job["status"] in ("completed", "stopped", "error"):
+                terminal = {"type": job["status"], "timestamp": datetime.now().isoformat()}
+                if job["status"] == "stopped":
+                    terminal["has_content"] = bool(job.get("output_file"))
+                elif job["status"] == "error":
+                    terminal["message"] = job.get("error", "Transcription error")
+                yield f"data: {json.dumps(terminal)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Job not found'})}\n\n"
             return
 
         # Send initial connection confirmation
@@ -259,12 +312,24 @@ def stream_events(job_id):
                     yield f": heartbeat\n\n"
                     last_heartbeat = current_time
 
-                # Check if job is done
+                # Check if job finished while queue is empty (e.g. terminal event
+                # was consumed by a previous connection that then dropped).
+                # Synthesize the terminal event so the client reaches a final state.
                 job = get_job(job_id)
                 if job and job["status"] in ["completed", "stopped", "error"]:
+                    terminal = {"type": job["status"], "timestamp": datetime.now().isoformat()}
+                    if job["status"] == "stopped":
+                        terminal["has_content"] = bool(job.get("output_file"))
+                    elif job["status"] == "error":
+                        terminal["message"] = job.get("error", "Transcription error")
+                    yield f"data: {json.dumps(terminal)}\n\n"
                     break
 
-    return Response(generate(), mimetype="text/event-stream")
+    response = Response(generate(), mimetype="text/event-stream")
+    # Prevent reverse-proxy (Nginx / Render) from buffering SSE chunks
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @app.route("/api/download/<job_id>", methods=["GET"])
