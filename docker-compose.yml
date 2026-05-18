@@ -1,0 +1,17 @@
+services:
+  speech-api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+    env_file:
+      - api/.env
+    environment:
+      - PORT=10000
+    volumes:
+      - uploads:/app/uploads
+      - output:/app/out
+
+volumes:
+  uploads:
+  output:
